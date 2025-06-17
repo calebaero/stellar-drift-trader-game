@@ -1,4 +1,4 @@
-import { Ship, Vector2, StarSystem, CargoItem, Mission } from '../types/game';
+import { Ship, Vector2, StarSystem, CargoItem, Mission, WorldObject, Enemy } from '../types/game';
 import { MARKET_COMMODITIES, ASTEROID_RESOURCES } from '../data/gameData';
 
 // FIXED: Add unique ID generator to prevent duplicate keys
@@ -13,19 +13,30 @@ export function distance(pos1: Vector2, pos2: Vector2): number {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-export function updateShipPhysics(ship: Ship, thrustVector: Vector2, deltaTime: number) {
+// --- NEW: Enhanced physics for elite bounty targets ---
+export function updateShipPhysics(ship: Ship, thrustVector: Vector2, deltaTime: number, enemy?: Enemy) {
   // Apply thrust - using smaller multiplier here since we increased it in moveShip
-  ship.velocity.x += thrustVector.x * deltaTime * 0.08;
-  ship.velocity.y += thrustVector.y * deltaTime * 0.08;
+  let thrustMultiplier = 0.08;
+  let dragMultiplier = 0.98;
+  
+  // Enhanced AI behavior for elite bounty targets
+  if (enemy?.isBountyTarget) {
+    thrustMultiplier = 0.12; // 50% faster acceleration
+    dragMultiplier = 0.96; // Better maneuverability (less drag)
+  }
+  
+  ship.velocity.x += thrustVector.x * deltaTime * thrustMultiplier;
+  ship.velocity.y += thrustVector.y * deltaTime * thrustMultiplier;
   
   // Apply drag
-  ship.velocity.x *= 0.98;
-  ship.velocity.y *= 0.98;
+  ship.velocity.x *= dragMultiplier;
+  ship.velocity.y *= dragMultiplier;
   
   // Update position
   ship.position.x += ship.velocity.x * deltaTime;
   ship.position.y += ship.velocity.y * deltaTime;
 }
+// --- End enhanced physics ---
 
 export function calculateDamage(attacker: Ship, target: Ship): number {
   // Base damage calculation
@@ -119,7 +130,8 @@ export function generateGalaxy(): Record<string, StarSystem> {
       missions: [],
       connections: [], // FIXED: Ensure connections array is always initialized
       discovered: index === 0, // Only first system (Alpha Centauri) starts discovered
-      controllingFaction: factions[Math.floor(Math.random() * factions.length)]
+      controllingFaction: factions[Math.floor(Math.random() * factions.length)],
+      worldObjects: [] // --- NEW: Initialize worldObjects array ---
     };
   });
 
@@ -130,6 +142,9 @@ export function generateGalaxy(): Record<string, StarSystem> {
   // Validate that all systems are properly created and log the starting system
   console.log(`Generated ${systemIds.length} systems for galaxy`);
   console.log('Starting system should be:', systemIds[0]); // This should be "alpha-centauri"
+  
+  // --- NEW: Store planned connections for WorldObject generation ---
+  const plannedConnections: Array<{from: string, to: string}> = [];
   
   systemValues.forEach(system => {
     // FIXED: Add null checks and validation
@@ -148,11 +163,33 @@ export function generateGalaxy(): Record<string, StarSystem> {
         const dist = distance(system.position, otherSystem.position);
         // Create connections for systems within reasonable range
         if (dist < 250 && Math.random() < 0.4) {
-          if (!system.connections.includes(otherSystem.id)) {
-            system.connections.push(otherSystem.id);
-          }
-          if (!otherSystem.connections.includes(system.id)) {
-            otherSystem.connections.push(system.id);
+          // --- NEW: 10% chance for connection to be broken (for repair missions) ---
+          if (Math.random() < 0.1) {
+            // Create a damaged jump gate instead of direct connection
+            const worldObject: WorldObject = {
+              id: generateUniqueId('damaged-gate') as any,
+              type: 'DamagedJumpGate',
+              position: {
+                x: system.position.x + (otherSystem.position.x - system.position.x) * 0.8,
+                y: system.position.y + (otherSystem.position.y - system.position.y) * 0.8
+              },
+              status: 'DAMAGED',
+              requiredItems: [
+                { itemId: 'iron' as any, required: 5, supplied: 0 },
+                { itemId: 'crystals' as any, required: 2, supplied: 0 }
+              ]
+            };
+            system.worldObjects.push(worldObject);
+            plannedConnections.push({from: system.id, to: otherSystem.id});
+            console.log(`Created damaged jump gate in ${system.name} preventing connection to ${otherSystem.name}`);
+          } else {
+            // Normal connection
+            if (!system.connections.includes(otherSystem.id)) {
+              system.connections.push(otherSystem.id);
+            }
+            if (!otherSystem.connections.includes(system.id)) {
+              otherSystem.connections.push(system.id);
+            }
           }
         }
       } catch (error) {
@@ -289,6 +326,25 @@ export function generateGalaxy(): Record<string, StarSystem> {
         system.asteroids.push(asteroid);
       }
 
+      // --- NEW: Generate additional WorldObjects (broken relays) ---
+      if (Math.random() < 0.2) { // 20% chance for broken relay
+        const relay: WorldObject = {
+          id: generateUniqueId('broken-relay') as any,
+          type: 'BrokenRelay',
+          position: {
+            x: Math.random() * 1000 - 500,
+            y: Math.random() * 1000 - 500
+          },
+          status: 'DAMAGED',
+          requiredItems: [
+            { itemId: 'platinum' as any, required: 3, supplied: 0 },
+            { itemId: 'rare-metals' as any, required: 1, supplied: 0 }
+          ]
+        };
+        system.worldObjects.push(relay);
+        console.log(`Created broken relay in ${system.name}`);
+      }
+
       // Generate missions for each station
       system.stations.forEach(station => {
         const missionCount = Math.floor(Math.random() * 5) + 2;
@@ -307,7 +363,8 @@ export function generateGalaxy(): Record<string, StarSystem> {
   console.log(`Generated galaxy with ${Object.keys(systems).length} systems:`);
   Object.values(systems).forEach(system => {
     if (system) {
-      console.log(`- ${system.name} (${system.id}): ${system.stations.length} stations, ${system.asteroids.length} asteroids (${system.asteroids.filter(a => a.resources.length > 0).length} with resources), ${system.missions.length} missions`);
+      const worldObjectCount = system.worldObjects.length;
+      console.log(`- ${system.name} (${system.id}): ${system.stations.length} stations, ${system.asteroids.length} asteroids (${system.asteroids.filter(a => a.resources.length > 0).length} with resources), ${system.missions.length} missions, ${worldObjectCount} world objects`);
     }
   });
 

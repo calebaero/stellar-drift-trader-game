@@ -5,18 +5,39 @@ import { Badge } from './ui/badge';
 import { distance } from '../utils/gameUtils';
 
 export function SystemView() {
-  // FIXED: Use individual stable selectors instead of object selectors
+  // FIXED: Use safe selectors with null checks
   const activeMode = useGameStore(state => state.activeMode);
   const currentSystemId = useGameStore(state => state.currentSystem);
   const player = useGameStore(state => state.player);
   const credits = useGameStore(state => state.credits);
-  const enemies = useGameStore(state => state.enemies);
-  const projectiles = useGameStore(state => state.projectiles);
-  const explosions = useGameStore(state => state.explosions);
+  const enemies = useGameStore(state => state.enemies || []);
+  const projectiles = useGameStore(state => state.projectiles || []);
+  const explosions = useGameStore(state => state.explosions || []);
   
-  // FIXED: Memoized complex selectors
-  const currentSystem = useGameStore(state => state.galaxy[state.currentSystem]);
-  const factions = useGameStore(state => state.factions);
+  // FIXED: Safe access to galaxy and current system
+  const currentSystem = useGameStore(state => {
+    const galaxy = state.galaxy;
+    const systemId = state.currentSystem;
+    return galaxy && systemId ? galaxy[systemId] : null;
+  });
+  
+  const factions = useGameStore(state => state.factions || {});
+  
+  // FIXED: Safe mission tracking selectors
+  const trackedMissionId = useGameStore(state => state.trackedMissionId);
+  const activeMissions = useGameStore(state => state.activeMissions || []);
+  
+  // FIXED: Safe derived mission data
+  const trackedMission = useMemo(() => {
+    if (!trackedMissionId || !activeMissions.length) return null;
+    return activeMissions.find(m => m.id === trackedMissionId) || null;
+  }, [trackedMissionId, activeMissions]);
+  
+  const currentObjective = useMemo(() => {
+    if (!trackedMission || !trackedMission.objectives) return null;
+    const objective = trackedMission.objectives[trackedMission.currentObjectiveIndex];
+    return objective && !objective.isHidden ? objective : null;
+  }, [trackedMission]);
   
   const { actions } = useGameStore();
 
@@ -30,6 +51,18 @@ export function SystemView() {
   const [canvasSize, setCanvasSize] = useState({ width: 800, height: 600 });
   const lastFireTime = useRef(0);
   const thrustAnimationRef = useRef<number>();
+
+  // Early return if system is not loaded
+  if (!currentSystem || !player) {
+    return (
+      <div className="h-full flex items-center justify-center bg-black text-white">
+        <div className="text-center">
+          <div className="animate-spin rotate border-t-2 border-blue-500 rounded-full w-8 h-8 mx-auto mb-4"></div>
+          <div>Loading system...</div>
+        </div>
+      </div>
+    );
+  }
 
   // MEMOIZE camera offset to prevent infinite re-renders
   const cameraOffset = useMemo(() => ({
@@ -56,11 +89,12 @@ export function SystemView() {
     };
   }, []);
 
-  // FIXED: Stable callback for interactions
+  // FIXED: Stable callback for interactions - NOW INCLUDES WORLDOBJECTS
   const handleInteract = useCallback(() => {
     const interactableObjects = nearbyObjects.filter(obj => 
       (obj.type === 'station' && obj.canDock) || 
-      (obj.type === 'asteroid' && obj.canMine)
+      (obj.type === 'asteroid' && obj.canMine) ||
+      (obj.type === 'worldObject' && obj.canRepair) // --- NEW: WorldObject interaction ---
     );
     
     if (interactableObjects.length === 0) {
@@ -73,6 +107,11 @@ export function SystemView() {
       actions.dockAtStation(closest.object.id);
     } else if (closest.type === 'asteroid') {
       actions.mineAsteroid(closest.object.id);
+    } else if (closest.type === 'worldObject') {
+      // --- NEW: Handle WorldObject interaction ---
+      // TODO: This should be implemented in the actions/store to actually perform repair
+      console.log(`Attempting to repair ${closest.object.type} with ID: ${closest.object.id}`);
+      // For now, just log the interaction - actual repair logic will be in MissionManager
     }
   }, [nearbyObjects, actions.dockAtStation, actions.mineAsteroid]);
 
@@ -209,43 +248,70 @@ export function SystemView() {
     };
   }, [isMouseDown, mousePosition.x, mousePosition.y, actions.setPlayerInput]);
 
-  // FIXED: Throttled nearby objects check
+  // FIXED: Throttled nearby objects check - NOW INCLUDES WORLDOBJECTS
   useEffect(() => {
     const updateNearbyObjects = () => {
       const nearby: any[] = [];
       
-      // Check stations
-      currentSystem.stations.forEach(station => {
-        const dist = distance(player.position, station.position);
-        if (dist < 100) {
-          nearby.push({
-            type: 'station',
-            object: station,
-            distance: dist,
-            canDock: dist < 50
-          });
-        }
-      });
+      // FIXED: Safe access to system properties
+      if (currentSystem?.stations) {
+        currentSystem.stations.forEach(station => {
+          const dist = distance(player.position, station.position);
+          if (dist < 100) {
+            nearby.push({
+              type: 'station',
+              object: station,
+              distance: dist,
+              canDock: dist < 50
+            });
+          }
+        });
+      }
       
       // Check asteroids
-      currentSystem.asteroids.forEach(asteroid => {
-        const dist = distance(player.position, asteroid.position);
-        if (dist < asteroid.size + 50) {
-          nearby.push({
-            type: 'asteroid',
-            object: asteroid,
-            distance: dist,
-            canMine: dist < asteroid.size + 30 && asteroid.resources.length > 0
-          });
-        }
-      });
+      if (currentSystem?.asteroids) {
+        currentSystem.asteroids.forEach(asteroid => {
+          const dist = distance(player.position, asteroid.position);
+          if (dist < asteroid.size + 50) {
+            nearby.push({
+              type: 'asteroid',
+              object: asteroid,
+              distance: dist,
+              canMine: dist < asteroid.size + 30 && asteroid.resources?.length > 0
+            });
+          }
+        });
+      }
+      
+      // --- NEW: Check WorldObjects ---
+      if (currentSystem?.worldObjects) {
+        currentSystem.worldObjects.forEach(worldObject => {
+          const dist = distance(player.position, worldObject.position);
+          if (dist < 100) {
+            // Check if player has required materials
+            const hasRequiredMaterials = worldObject.status === 'DAMAGED' && 
+              worldObject.requiredItems?.every(item => {
+                const playerItem = player.cargo.find(cargo => cargo.id === item.itemId);
+                return playerItem && playerItem.quantity >= item.required;
+              });
+            
+            nearby.push({
+              type: 'worldObject',
+              object: worldObject,
+              distance: dist,
+              canRepair: dist < 50 && hasRequiredMaterials
+            });
+          }
+        });
+      }
       
       nearby.sort((a, b) => a.distance - b.distance);
       setNearbyObjects(nearby);
       
       const interactableObjects = nearby.filter(obj => 
         (obj.type === 'station' && obj.canDock) || 
-        (obj.type === 'asteroid' && obj.canMine)
+        (obj.type === 'asteroid' && obj.canMine) ||
+        (obj.type === 'worldObject' && obj.canRepair)
       );
       
       if (interactableObjects.length > 0) {
@@ -262,12 +328,12 @@ export function SystemView() {
     return () => {
       clearInterval(intervalId);
     };
-  }, [player.position.x, player.position.y, currentSystemId, actions.setSelectedTarget]);
+  }, [player.position.x, player.position.y, currentSystemId, actions.setSelectedTarget, currentSystem]);
 
   // FIXED: Stable canvas drawing with reduced dependencies
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas || !currentSystem) return;
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
@@ -297,95 +363,271 @@ export function SystemView() {
     );
 
     // Draw asteroids
-    currentSystem.asteroids.forEach(asteroid => {
-      const dist = distance(player.position, asteroid.position);
-      
-      ctx.fillStyle = asteroid.resources.length > 0 ? '#CD853F' : '#8B4513';
-      ctx.beginPath();
-      ctx.arc(asteroid.position.x, asteroid.position.y, asteroid.size, 0, Math.PI * 2);
-      ctx.fill();
-      
-      ctx.strokeStyle = asteroid.resources.length > 0 ? '#FFD700' : '#A0522D';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      
-      if (dist < asteroid.size + 50) {
-        ctx.strokeStyle = dist < asteroid.size + 30 ? 'rgba(0, 255, 0, 0.6)' : 'rgba(255, 255, 0, 0.4)';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([5, 5]);
+    if (currentSystem.asteroids) {
+      currentSystem.asteroids.forEach(asteroid => {
+        const dist = distance(player.position, asteroid.position);
+        
+        ctx.fillStyle = asteroid.resources?.length > 0 ? '#CD853F' : '#8B4513';
         ctx.beginPath();
-        ctx.arc(asteroid.position.x, asteroid.position.y, asteroid.size + 30, 0, Math.PI * 2);
+        ctx.arc(asteroid.position.x, asteroid.position.y, asteroid.size, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.strokeStyle = asteroid.resources?.length > 0 ? '#FFD700' : '#A0522D';
+        ctx.lineWidth = 2;
         ctx.stroke();
-        ctx.setLineDash([]);
-      }
-      
-      if (asteroid.resources.length > 0 && dist < 200) {
-        ctx.fillStyle = '#FFD700';
-        ctx.font = '12px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(
-          `${asteroid.resources[0].name} x${asteroid.resources[0].quantity}`,
-          asteroid.position.x,
-          asteroid.position.y + asteroid.size + 20
-        );
-      }
+        
+        if (dist < asteroid.size + 50) {
+          ctx.strokeStyle = dist < asteroid.size + 30 ? 'rgba(0, 255, 0, 0.6)' : 'rgba(255, 255, 0, 0.4)';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([5, 5]);
+          ctx.beginPath();
+          ctx.arc(asteroid.position.x, asteroid.position.y, asteroid.size + 30, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        
+        if (asteroid.resources?.length > 0 && dist < 200) {
+          ctx.fillStyle = '#FFD700';
+          ctx.font = '12px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText(
+            `${asteroid.resources[0].name} x${asteroid.resources[0].quantity}`,
+            asteroid.position.x,
+            asteroid.position.y + asteroid.size + 20
+          );
+        }
 
-      if (dist < asteroid.size + 30 && asteroid.resources.length > 0) {
-        ctx.fillStyle = 'rgba(0, 255, 0, 0.9)';
-        ctx.font = 'bold 14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('Press E to Mine', asteroid.position.x, asteroid.position.y - asteroid.size - 15);
-      }
-    });
+        if (dist < asteroid.size + 30 && asteroid.resources?.length > 0) {
+          ctx.fillStyle = 'rgba(0, 255, 0, 0.9)';
+          ctx.font = 'bold 14px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText('Press E to Mine', asteroid.position.x, asteroid.position.y - asteroid.size - 15);
+        }
+      });
+    }
+
+    // --- NEW: Draw WorldObjects ---
+    if (currentSystem.worldObjects) {
+      currentSystem.worldObjects.forEach(worldObject => {
+        const dist = distance(player.position, worldObject.position);
+        
+        // --- NEW: Check if worldObject is a mission objective ---
+        const isMissionTarget = currentObjective && 
+          currentObjective.type === 'INTERACT' &&
+          currentObjective.targetId === worldObject.id;
+        
+        // Draw WorldObject based on type
+        if (worldObject.type === 'DamagedJumpGate') {
+          // Draw damaged jump gate as hexagonal structure with sparks
+          const size = 30;
+          ctx.strokeStyle = worldObject.status === 'DAMAGED' ? '#FF4444' : '#44FF44';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          
+          // Draw hexagon
+          for (let i = 0; i < 6; i++) {
+            const angle = (i * Math.PI) / 3;
+            const x = worldObject.position.x + Math.cos(angle) * size;
+            const y = worldObject.position.y + Math.sin(angle) * size;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.closePath();
+          ctx.stroke();
+          
+          // Fill with semi-transparent color
+          ctx.fillStyle = worldObject.status === 'DAMAGED' ? 'rgba(255, 68, 68, 0.3)' : 'rgba(68, 255, 68, 0.3)';
+          ctx.fill();
+          
+          // Add electrical sparks effect for damaged gates
+          if (worldObject.status === 'DAMAGED' && Math.random() < 0.1) {
+            ctx.strokeStyle = '#FFFF00';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            const sparkX = worldObject.position.x + (Math.random() - 0.5) * size * 2;
+            const sparkY = worldObject.position.y + (Math.random() - 0.5) * size * 2;
+            ctx.moveTo(sparkX, sparkY);
+            ctx.lineTo(sparkX + (Math.random() - 0.5) * 20, sparkY + (Math.random() - 0.5) * 20);
+            ctx.stroke();
+          }
+        } else if (worldObject.type === 'BrokenRelay') {
+          // Draw broken relay as diamond with antenna
+          const size = 20;
+          ctx.fillStyle = worldObject.status === 'DAMAGED' ? '#AA4444' : '#44AA44';
+          ctx.beginPath();
+          ctx.moveTo(worldObject.position.x, worldObject.position.y - size);
+          ctx.lineTo(worldObject.position.x + size, worldObject.position.y);
+          ctx.lineTo(worldObject.position.x, worldObject.position.y + size);
+          ctx.lineTo(worldObject.position.x - size, worldObject.position.y);
+          ctx.closePath();
+          ctx.fill();
+          
+          ctx.strokeStyle = '#FFFFFF';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          
+          // Draw antenna
+          ctx.strokeStyle = worldObject.status === 'DAMAGED' ? '#FF4444' : '#44FF44';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(worldObject.position.x, worldObject.position.y - size);
+          ctx.lineTo(worldObject.position.x, worldObject.position.y - size - 15);
+          ctx.stroke();
+        }
+        
+        // --- NEW: Draw mission objective marker ---
+        if (isMissionTarget) {
+          const time = Date.now() / 1000;
+          const pulseAlpha = (Math.sin(time * 3) + 1) / 2 * 0.8 + 0.2;
+          ctx.strokeStyle = `rgba(0, 255, 255, ${pulseAlpha})`;
+          ctx.lineWidth = 4;
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.arc(worldObject.position.x, worldObject.position.y, 60, 0, Math.PI * 2);
+          ctx.stroke();
+          
+          // Mission objective icon
+          ctx.fillStyle = 'rgba(0, 255, 255, 0.9)';
+          ctx.font = 'bold 20px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText('🎯', worldObject.position.x, worldObject.position.y - 80);
+        }
+        
+        // Draw interaction range
+        if (dist < 100) {
+          ctx.strokeStyle = dist < 50 ? 'rgba(0, 255, 255, 0.8)' : 'rgba(255, 255, 0, 0.5)';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([8, 4]);
+          ctx.beginPath();
+          ctx.arc(worldObject.position.x, worldObject.position.y, 50, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        
+        // Draw name and status
+        if (dist < 200) {
+          ctx.fillStyle = 'white';
+          ctx.font = '14px Arial';
+          ctx.textAlign = 'center';
+          const typeName = worldObject.type.replace(/([A-Z])/g, ' $1').trim();
+          ctx.fillText(typeName, worldObject.position.x, worldObject.position.y - 50);
+          
+          ctx.font = '12px Arial';
+          ctx.fillStyle = worldObject.status === 'DAMAGED' ? '#FF4444' : '#44FF44';
+          ctx.fillText(worldObject.status, worldObject.position.x, worldObject.position.y + 60);
+          ctx.fillText(`${Math.round(dist)}m`, worldObject.position.x, worldObject.position.y + 75);
+        }
+        
+        // Draw interaction prompt
+        if (dist < 50 && worldObject.status === 'DAMAGED') {
+          const hasRequiredMaterials = worldObject.requiredItems?.every(item => {
+            const playerItem = player.cargo.find(cargo => cargo.id === item.itemId);
+            return playerItem && playerItem.quantity >= item.required;
+          });
+          
+          if (hasRequiredMaterials) {
+            ctx.fillStyle = 'rgba(0, 255, 255, 0.9)';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Press E to Repair', worldObject.position.x, worldObject.position.y - 70);
+          } else {
+            ctx.fillStyle = 'rgba(255, 255, 0, 0.9)';
+            ctx.font = 'bold 14px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Missing Materials', worldObject.position.x, worldObject.position.y - 70);
+            
+            // Show required materials
+            if (worldObject.requiredItems) {
+              ctx.font = '10px Arial';
+              worldObject.requiredItems.forEach((item, index) => {
+                const playerItem = player.cargo.find(cargo => cargo.id === item.itemId);
+                const hasEnough = playerItem && playerItem.quantity >= item.required;
+                ctx.fillStyle = hasEnough ? '#44FF44' : '#FF4444';
+                ctx.fillText(
+                  `${item.itemId}: ${playerItem?.quantity || 0}/${item.required}`,
+                  worldObject.position.x,
+                  worldObject.position.y - 55 + (index * 12)
+                );
+              });
+            }
+          }
+        }
+      });
+    }
 
     // Draw stations
-    currentSystem.stations.forEach(station => {
-      const size = 25;
-      const dist = distance(player.position, station.position);
-      
-      ctx.fillStyle = factions[station.faction]?.color || '#888';
-      ctx.fillRect(
-        station.position.x - size/2,
-        station.position.y - size/2,
-        size,
-        size
-      );
-      
-      ctx.strokeStyle = '#FFF';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(
-        station.position.x - size/2,
-        station.position.y - size/2,
-        size,
-        size
-      );
+    if (currentSystem.stations) {
+      currentSystem.stations.forEach(station => {
+        const size = 25;
+        const dist = distance(player.position, station.position);
+        
+        // --- NEW: Check if station is a mission objective ---
+        const isMissionTarget = currentObjective && 
+          (currentObjective.type === 'TRAVEL' || currentObjective.type === 'INTERACT') &&
+          currentObjective.targetId === station.id;
+        
+        ctx.fillStyle = factions[station.faction]?.color || '#888';
+        ctx.fillRect(
+          station.position.x - size/2,
+          station.position.y - size/2,
+          size,
+          size
+        );
+        
+        ctx.strokeStyle = '#FFF';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(
+          station.position.x - size/2,
+          station.position.y - size/2,
+          size,
+          size
+        );
 
-      if (dist < 100) {
-        ctx.strokeStyle = dist < 50 ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.5)';
-        ctx.lineWidth = 3;
-        ctx.setLineDash([8, 4]);
-        ctx.beginPath();
-        ctx.arc(station.position.x, station.position.y, 50, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
+        // --- NEW: Draw mission objective marker ---
+        if (isMissionTarget) {
+          const time = Date.now() / 1000;
+          const pulseAlpha = (Math.sin(time * 3) + 1) / 2 * 0.8 + 0.2;
+          ctx.strokeStyle = `rgba(0, 255, 255, ${pulseAlpha})`;
+          ctx.lineWidth = 4;
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.arc(station.position.x, station.position.y, size + 10, 0, Math.PI * 2);
+          ctx.stroke();
+          
+          // Mission objective icon
+          ctx.fillStyle = 'rgba(0, 255, 255, 0.9)';
+          ctx.font = 'bold 20px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText('🎯', station.position.x, station.position.y - size - 20);
+        }
 
-      if (dist < 200) {
-        ctx.fillStyle = 'white';
-        ctx.font = '14px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(station.name, station.position.x, station.position.y - 40);
-        ctx.font = '12px Arial';
-        ctx.fillText(`${Math.round(dist)}m`, station.position.x, station.position.y + 50);
-      }
+        if (dist < 100) {
+          ctx.strokeStyle = dist < 50 ? 'rgba(0, 255, 0, 0.8)' : 'rgba(255, 255, 0, 0.5)';
+          ctx.lineWidth = 3;
+          ctx.setLineDash([8, 4]);
+          ctx.beginPath();
+          ctx.arc(station.position.x, station.position.y, 50, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
 
-      if (dist < 50) {
-        ctx.fillStyle = 'rgba(0, 255, 0, 0.9)';
-        ctx.font = 'bold 16px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText('Press E to Dock', station.position.x, station.position.y - 60);
-      }
-    });
+        if (dist < 200) {
+          ctx.fillStyle = 'white';
+          ctx.font = '14px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText(station.name, station.position.x, station.position.y - 40);
+          ctx.font = '12px Arial';
+          ctx.fillText(`${Math.round(dist)}m`, station.position.x, station.position.y + 50);
+        }
+
+        if (dist < 50) {
+          ctx.fillStyle = 'rgba(0, 255, 0, 0.9)';
+          ctx.font = 'bold 16px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText('Press E to Dock', station.position.x, station.position.y - 60);
+        }
+      });
+    }
 
     // Draw projectiles
     projectiles.forEach(projectile => {
@@ -420,7 +662,9 @@ export function SystemView() {
 
     // Draw enemies
     enemies.forEach(enemy => {
-      drawShip(ctx, enemy.ship, '#FF4444');
+      // --- NEW: Enhanced rendering for bounty targets ---
+      const color = enemy.isBountyTarget ? '#AA0000' : '#FF4444'; // Darker red for bounty targets
+      drawShip(ctx, enemy.ship, color, enemy.isBountyTarget);
     });
 
     // Draw player ship
@@ -442,13 +686,27 @@ export function SystemView() {
     player.maxHealth,
     player.shields,
     player.maxShields,
-    isMouseDown
+    isMouseDown,
+    currentSystem
   ]);
 
-  function drawShip(ctx: CanvasRenderingContext2D, ship: any, color: string) {
+  // --- UPDATED: Enhanced ship drawing with bounty target indicators ---
+  function drawShip(ctx: CanvasRenderingContext2D, ship: any, color: string, isBountyTarget?: boolean) {
     ctx.save();
     ctx.translate(ship.position.x, ship.position.y);
     ctx.rotate(ship.rotation);
+
+    // Enhanced visual for bounty targets
+    if (isBountyTarget) {
+      // Draw warning indicator around bounty targets
+      ctx.strokeStyle = '#FFFF00';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([10, 5]);
+      ctx.beginPath();
+      ctx.arc(0, 0, 30, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
 
     ctx.fillStyle = color;
     ctx.beginPath();
@@ -512,6 +770,17 @@ export function SystemView() {
     ctx.strokeStyle = '#FFF';
     ctx.lineWidth = 1;
     ctx.strokeRect(ship.position.x - barWidth/2, barY + 7, barWidth, barHeight);
+
+    // --- NEW: Bounty target name label ---
+    if (isBountyTarget) {
+      ctx.fillStyle = '#FFFF00';
+      ctx.font = 'bold 12px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('⚠️ BOUNTY TARGET', ship.position.x, ship.position.y - 55);
+      ctx.fillStyle = '#FF4444';
+      ctx.font = '10px Arial';
+      ctx.fillText(ship.name || 'Elite Pirate', ship.position.x, ship.position.y - 43);
+    }
   }
 
   function drawUI(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
@@ -537,28 +806,47 @@ export function SystemView() {
     const centerY = minimapY + minimapSize / 2;
 
     // Stations
-    currentSystem.stations.forEach(station => {
-      const x = centerX + (station.position.x - player.position.x) * minimapScale;
-      const y = centerY + (station.position.y - player.position.y) * minimapScale;
-      
-      if (x >= minimapX && x <= minimapX + minimapSize && y >= minimapY && y <= minimapY + minimapSize) {
-        ctx.fillStyle = '#FFD700';
-        ctx.fillRect(x - 3, y - 3, 6, 6);
-      }
-    });
+    if (currentSystem.stations) {
+      currentSystem.stations.forEach(station => {
+        const x = centerX + (station.position.x - player.position.x) * minimapScale;
+        const y = centerY + (station.position.y - player.position.y) * minimapScale;
+        
+        if (x >= minimapX && x <= minimapX + minimapSize && y >= minimapY && y <= minimapY + minimapSize) {
+          ctx.fillStyle = '#FFD700';
+          ctx.fillRect(x - 3, y - 3, 6, 6);
+        }
+      });
+    }
 
     // Asteroids
-    currentSystem.asteroids.forEach(asteroid => {
-      const x = centerX + (asteroid.position.x - player.position.x) * minimapScale;
-      const y = centerY + (asteroid.position.y - player.position.y) * minimapScale;
-      
-      if (x >= minimapX && x <= minimapX + minimapSize && y >= minimapY && y <= minimapY + minimapSize) {
-        ctx.fillStyle = asteroid.resources.length > 0 ? '#CD853F' : '#8B4513';
-        ctx.beginPath();
-        ctx.arc(x, y, 2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    });
+    if (currentSystem.asteroids) {
+      currentSystem.asteroids.forEach(asteroid => {
+        const x = centerX + (asteroid.position.x - player.position.x) * minimapScale;
+        const y = centerY + (asteroid.position.y - player.position.y) * minimapScale;
+        
+        if (x >= minimapX && x <= minimapX + minimapSize && y >= minimapY && y <= minimapY + minimapSize) {
+          ctx.fillStyle = asteroid.resources?.length > 0 ? '#CD853F' : '#8B4513';
+          ctx.beginPath();
+          ctx.arc(x, y, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+    }
+
+    // --- NEW: WorldObjects on minimap ---
+    if (currentSystem.worldObjects) {
+      currentSystem.worldObjects.forEach(worldObject => {
+        const x = centerX + (worldObject.position.x - player.position.x) * minimapScale;
+        const y = centerY + (worldObject.position.y - player.position.y) * minimapScale;
+        
+        if (x >= minimapX && x <= minimapX + minimapSize && y >= minimapY && y <= minimapY + minimapSize) {
+          ctx.fillStyle = worldObject.status === 'DAMAGED' ? '#FF4444' : '#00FFFF';
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+    }
 
     // Enemies
     enemies.forEach(enemy => {
@@ -566,9 +854,10 @@ export function SystemView() {
       const y = centerY + (enemy.ship.position.y - player.position.y) * minimapScale;
       
       if (x >= minimapX && x <= minimapX + minimapSize && y >= minimapY && y <= minimapY + minimapSize) {
-        ctx.fillStyle = '#FF4444';
+        // --- NEW: Different color for bounty targets on minimap ---
+        ctx.fillStyle = enemy.isBountyTarget ? '#FFFF00' : '#FF4444';
         ctx.beginPath();
-        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.arc(x, y, enemy.isBountyTarget ? 4 : 3, 0, Math.PI * 2);
         ctx.fill();
       }
     });
@@ -592,7 +881,8 @@ export function SystemView() {
 
   const canInteract = nearbyObjects.some(obj => 
     (obj.type === 'station' && obj.canDock) || 
-    (obj.type === 'asteroid' && obj.canMine)
+    (obj.type === 'asteroid' && obj.canMine) ||
+    (obj.type === 'worldObject' && obj.canRepair) // --- NEW: Include WorldObject interactions ---
   );
 
   return (
@@ -632,6 +922,28 @@ export function SystemView() {
           tabIndex={0}
         />
 
+        {/* --- NEW: Mission HUD Tracker --- */}
+        {currentObjective && (
+          <div className="absolute top-4 right-4 bg-black bg-opacity-90 p-3 rounded border border-green-500 max-w-xs z-10">
+            <div className="text-green-400 font-medium mb-2 flex items-center gap-2">
+              🎯 Current Objective
+              <span className="text-xs text-gray-400">(J for details)</span>
+            </div>
+            <div className="text-sm space-y-1">
+              <div className="text-white font-medium">{trackedMission?.title}</div>
+              <div className="text-gray-300">{currentObjective.description}</div>
+              {currentObjective.targetCount && currentObjective.targetCount > 1 && (
+                <div className="text-xs text-yellow-400">
+                  Progress: {currentObjective.currentProgress || 0}/{currentObjective.targetCount}
+                </div>
+              )}
+              <div className="text-xs text-blue-400">
+                Reward: {trackedMission?.rewardCredits.toLocaleString()} CR
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Controls Help */}
         {showControls && (
           <div className="absolute top-4 left-4 bg-black bg-opacity-90 p-3 rounded border border-blue-500 max-w-xs z-10">
@@ -642,18 +954,20 @@ export function SystemView() {
               <div><span className="text-yellow-400">SPACE/Right-click</span> - Fire weapons</div>
               <div><span className="text-yellow-400">E</span> - Dock/Mine/Interact</div>
               <div><span className="text-yellow-400">M</span> - Galaxy map</div>
+              <div><span className="text-yellow-400">J</span> - Mission log</div>
               <div><span className="text-yellow-400">ESC</span> - Hide this panel</div>
             </div>
           </div>
         )}
 
-        {/* Interaction Prompts */}
+        {/* --- UPDATED: Interaction Prompts including WorldObjects --- */}
         {nearbyObjects.length > 0 && (
           <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none z-10">
             {(() => {
               const interactable = nearbyObjects.find(obj => 
                 (obj.type === 'station' && obj.canDock) || 
-                (obj.type === 'asteroid' && obj.canMine)
+                (obj.type === 'asteroid' && obj.canMine) ||
+                (obj.type === 'worldObject' && obj.canRepair)
               );
               
               if (!interactable) return null;
@@ -667,7 +981,12 @@ export function SystemView() {
                   )}
                   {interactable.type === 'asteroid' && (
                     <div className="bg-yellow-600 bg-opacity-90 px-4 py-2 rounded text-white font-bold animate-pulse">
-                      ⛏️ Press E to MINE {interactable.object.resources[0]?.name}
+                      ⛏️ Press E to MINE {interactable.object.resources?.[0]?.name}
+                    </div>
+                  )}
+                  {interactable.type === 'worldObject' && (
+                    <div className="bg-cyan-600 bg-opacity-90 px-4 py-2 rounded text-white font-bold animate-pulse">
+                      🔧 Press E to REPAIR {interactable.object.type.replace(/([A-Z])/g, ' $1').trim()}
                     </div>
                   )}
                 </div>
@@ -701,6 +1020,7 @@ export function SystemView() {
           >
             {nearbyObjects.find(obj => obj.type === 'station' && obj.canDock) ? 'Dock' :
              nearbyObjects.find(obj => obj.type === 'asteroid' && obj.canMine) ? 'Mine' :
+             nearbyObjects.find(obj => obj.type === 'worldObject' && obj.canRepair) ? 'Repair' :
              'Interact'}
           </Button>
           <Button

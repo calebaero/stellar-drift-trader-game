@@ -63,6 +63,7 @@ interface GameStore extends GameState {
     mineAsteroid: (asteroidId: string) => void;
     acceptMission: (mission: Mission) => void;
     completeMission: (missionId: string) => void;
+    abandonMission: (missionId: string) => void; // --- NEW: Abandon mission action ---
     
     // Enemy management - FIXED: Simplified to reduce GameLoop coupling
     spawnEnemy: (position: Vector2, faction?: string) => void;
@@ -108,7 +109,8 @@ function createInitialGameState(): GameState {
     cargo: [],
     maxCargo: hull.maxCargo,
     modules: STARTING_SHIP_CONFIG.modules.map(id => SHIP_MODULES[id]),
-    faction: 'player'
+    faction: 'player',
+    detectionSignature: 100 // --- NEW: Default detection signature for stealth mechanics ---
   };
 
   return {
@@ -119,6 +121,8 @@ function createInitialGameState(): GameState {
     credits: STARTING_SHIP_CONFIG.credits,
     activeMode: 'system',
     activeMissions: [],
+    trackedMissionId: undefined, // --- NEW: For HUD mission tracking ---
+    codex: [], // --- NEW: For archaeological expedition lore ---
     gameTime: 0,
     runNumber: 1,
     metaProgress: {
@@ -382,22 +386,32 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const state = get();
       if (state.activeMissions.length >= 5) return;
       
-      const newMission = { ...mission, status: 'active' as any };
+      const newMission = { ...mission, status: 'ACTIVE' as any };
       
-      if (mission.cargo && mission.type === 'delivery') {
+      // --- UPDATED: Handle mission cargo using new format ---
+      if (mission.rewardItems && mission.type === 'DELIVERY') {
         const currentCargo = state.player.cargo.reduce((sum, item) => sum + item.quantity, 0);
-        if (currentCargo + mission.cargo.quantity > state.player.maxCargo) return;
+        if (currentCargo + mission.rewardItems.quantity > state.player.maxCargo) return;
         
         const newPlayer = { ...state.player };
-        if (addCargo(newPlayer, mission.cargo)) {
+        const cargoItem = {
+          id: mission.rewardItems.itemId,
+          name: 'Mission Cargo',
+          category: 'mission',
+          quantity: mission.rewardItems.quantity,
+          basePrice: 0
+        };
+        if (addCargo(newPlayer, cargoItem)) {
           set({
             player: newPlayer,
-            activeMissions: [...state.activeMissions, newMission]
+            activeMissions: [...state.activeMissions, newMission],
+            trackedMissionId: newMission.id // --- NEW: Auto-track new missions ---
           });
         }
       } else {
         set({
-          activeMissions: [...state.activeMissions, newMission]
+          activeMissions: [...state.activeMissions, newMission],
+          trackedMissionId: newMission.id // --- NEW: Auto-track new missions ---
         });
       }
     },
@@ -407,9 +421,53 @@ export const useGameStore = create<GameStore>((set, get) => ({
       const mission = state.activeMissions.find(m => m.id === missionId);
       if (!mission) return;
       
+      // Apply reputation changes
+      const newFactions = { ...state.factions };
+      Object.entries(mission.reputationChange).forEach(([factionId, change]) => {
+        if (newFactions[factionId] && change) {
+          newFactions[factionId] = {
+            ...newFactions[factionId],
+            reputation: newFactions[factionId].reputation + change
+          };
+        }
+      });
+      
       set({
-        credits: state.credits + mission.reward,
-        activeMissions: state.activeMissions.filter(m => m.id !== missionId)
+        credits: state.credits + mission.rewardCredits,
+        factions: newFactions,
+        activeMissions: state.activeMissions.filter(m => m.id !== missionId),
+        trackedMissionId: state.trackedMissionId === missionId ? undefined : state.trackedMissionId
+      });
+    },
+    
+    // --- NEW: Abandon mission action ---
+    abandonMission: (missionId: string) => {
+      const state = get();
+      const mission = state.activeMissions.find(m => m.id === missionId);
+      if (!mission) return;
+      
+      // Apply reputation penalty (negative of the positive changes)
+      const newFactions = { ...state.factions };
+      Object.entries(mission.reputationChange).forEach(([factionId, change]) => {
+        if (newFactions[factionId] && change && change > 0) {
+          newFactions[factionId] = {
+            ...newFactions[factionId],
+            reputation: newFactions[factionId].reputation - 5 // Fixed penalty for abandoning
+          };
+        }
+      });
+      
+      // Remove mission cargo if it was a delivery mission
+      let newPlayer = { ...state.player };
+      if (mission.type === 'DELIVERY' && mission.rewardItems) {
+        removeCargo(newPlayer, mission.rewardItems.itemId, mission.rewardItems.quantity);
+      }
+      
+      set({
+        player: newPlayer,
+        factions: newFactions,
+        activeMissions: state.activeMissions.filter(m => m.id !== missionId),
+        trackedMissionId: state.trackedMissionId === missionId ? undefined : state.trackedMissionId
       });
     },
     

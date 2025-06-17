@@ -3,6 +3,7 @@ import { GameState, Ship, StarSystem, Enemy, Vector2, Mission, CargoItem } from 
 import { SHIP_HULLS, SHIP_MODULES, STARTING_SHIP_CONFIG, FACTIONS, COMMODITIES } from '../data/gameData';
 import { generateGalaxy, updateShipPhysics, calculateDamage, addCargo, removeCargo, distance, checkMissionProgress, applyCollisionDamage, addModuleToShip } from '../utils/gameUtils';
 import { SpaceshipPhysicsEngine } from '../utils/SpaceshipPhysicsEngine';
+import { MissionManager } from '../utils/MissionManager';
 
 export function useGameState() {
   const [gameState, setGameState] = useState<GameState>(() => initializeGame());
@@ -15,6 +16,9 @@ export function useGameState() {
 
   // Create persistent physics engine instance
   const physicsEngine = useMemo(() => new SpaceshipPhysicsEngine(), []);
+  
+  // Create persistent mission manager instance
+  const missionManager = useMemo(() => new MissionManager(), []);
 
   function initializeGame(): GameState {
     const galaxy = generateGalaxy();
@@ -68,7 +72,7 @@ export function useGameState() {
     lastTimeRef.current = currentTime;
 
     setGameState(prevState => {
-      const newState = { ...prevState };
+      let newState = { ...prevState };
       
       // Update game time
       newState.gameTime += deltaTime;
@@ -88,33 +92,33 @@ export function useGameState() {
         );
       }
 
-      // Check mission progress with improved delivery logic
+      // --- NEW: Call the mission manager to update progress ---
+      newState = missionManager.updateMissionProgress(newState);
+      // --- END NEW ---
+
+      // Legacy mission progress logic - keeping for compatibility during transition
       newState.activeMissions = newState.activeMissions.map(mission => {
-        if (mission.status === 'active') {
-          // Special handling for delivery missions
-          if (mission.type === 'delivery') {
+        if (mission.status === 'ACTIVE') {
+          // Special handling for delivery missions (legacy format)
+          if (mission.type === 'DELIVERY') {
             // Must be at destination AND have the cargo
-            const atDestination = newState.currentSystem === mission.destination;
+            const atDestination = newState.currentSystem === mission.objectives?.[0]?.targetId;
             const hasCargo = newState.player.cargo.some((item: CargoItem) => 
-              item.id === mission.cargo?.id && item.quantity >= (mission.cargo?.quantity || 0)
+              item.id === mission.rewardItems?.itemId && item.quantity >= (mission.rewardItems?.quantity || 0)
             );
             
             if (atDestination && hasCargo) {
               // Remove the delivery cargo and complete mission
-              if (mission.cargo) {
-                removeCargo(newState.player, mission.cargo.id, mission.cargo.quantity);
+              if (mission.rewardItems) {
+                removeCargo(newState.player, mission.rewardItems.itemId, mission.rewardItems.quantity);
               }
-              newState.credits += mission.reward;
-              return { ...mission, status: 'completed' };
+              newState.credits += mission.rewardCredits;
+              return { ...mission, status: 'COMPLETED_SUCCESS' as any };
             }
-          } else if (checkMissionProgress(mission, newState)) {
-            // Complete other mission types
-            newState.credits += mission.reward;
-            return { ...mission, status: 'completed' };
           }
         }
         return mission;
-      }).filter(mission => mission.status !== 'completed');
+      }).filter(mission => mission.status !== 'COMPLETED_SUCCESS');
       
       return newState;
     });
@@ -244,7 +248,7 @@ export function useGameState() {
     );
 
     animationRef.current = requestAnimationFrame(updateGame);
-  }, [gameState.player.position, gameState.activeMode, gameState.currentSystem, enemies.length]);
+  }, [gameState.player.position, gameState.activeMode, gameState.currentSystem, enemies.length, missionManager]);
 
   useEffect(() => {
     animationRef.current = requestAnimationFrame(updateGame);
@@ -560,10 +564,20 @@ export function useGameState() {
             currentSystem.asteroids = currentSystem.asteroids.filter(a => a.id !== asteroidId);
           }
           
-          // Update mining mission progress
+          // Update mining mission progress - using new mission format
           newState.activeMissions = newState.activeMissions.map(mission => {
-            if (mission.type === 'mining' && mission.requiredResource === resource.id) {
-              return { ...mission, progress: mission.progress + minedQuantity };
+            if (mission.type === 'DELIVERY' && mission.objectives) {
+              // Check if any objective requires this resource
+              const updatedObjectives = mission.objectives.map(objective => {
+                if (objective.type === 'GATHER' && objective.targetId === resource.id) {
+                  return {
+                    ...objective,
+                    currentProgress: objective.currentProgress + minedQuantity
+                  };
+                }
+                return objective;
+              });
+              return { ...mission, objectives: updatedObjectives };
             }
             return mission;
           });
@@ -582,19 +596,26 @@ export function useGameState() {
         return prevState;
       }
       
-      const newMission = { ...mission, status: 'active' as any };
+      const newMission = { ...mission, status: 'ACTIVE' as any };
       
-      // Only add cargo for delivery missions, don't auto-complete
-      if (mission.cargo && mission.type === 'delivery') {
+      // Only add cargo for delivery missions with cargo objectives
+      if (mission.type === 'DELIVERY' && mission.rewardItems) {
         const currentCargo = prevState.player.cargo.reduce((sum, item) => sum + item.quantity, 0);
-        if (currentCargo + mission.cargo.quantity > prevState.player.maxCargo) {
+        if (currentCargo + mission.rewardItems.quantity > prevState.player.maxCargo) {
           console.log('Cannot accept mission - not enough cargo space');
           return prevState;
         }
         
         // Add the delivery cargo to player inventory
         const newState = { ...prevState };
-        if (addCargo(newState.player, mission.cargo)) {
+        const cargoItem = {
+          id: mission.rewardItems.itemId,
+          name: 'Mission Cargo',
+          category: 'mission',
+          quantity: mission.rewardItems.quantity,
+          basePrice: 0
+        };
+        if (addCargo(newState.player, cargoItem)) {
           return {
             ...newState,
             activeMissions: [...newState.activeMissions, newMission]
@@ -617,7 +638,7 @@ export function useGameState() {
       if (!mission) return prevState;
       
       const newState = { ...prevState };
-      newState.credits += mission.reward;
+      newState.credits += mission.rewardCredits;
       newState.activeMissions = newState.activeMissions.filter(m => m.id !== missionId);
       
       return newState;
@@ -703,12 +724,21 @@ export function useGameState() {
                 credits: prevState.credits + 50 + Math.floor(Math.random() * 100)
               }));
               
-              // Update combat mission progress
+              // Update combat mission progress - using new mission format
               setGameState(prevState => ({
                 ...prevState,
                 activeMissions: prevState.activeMissions.map(mission => {
-                  if (mission.type === 'combat') {
-                    return { ...mission, progress: mission.progress + 1 };
+                  if (mission.type === 'BOUNTY' && mission.objectives) {
+                    const updatedObjectives = mission.objectives.map(objective => {
+                      if (objective.type === 'KILL') {
+                        return {
+                          ...objective,
+                          currentProgress: objective.currentProgress + 1
+                        };
+                      }
+                      return objective;
+                    });
+                    return { ...mission, objectives: updatedObjectives };
                   }
                   return mission;
                 })

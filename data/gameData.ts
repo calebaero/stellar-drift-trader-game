@@ -85,6 +85,21 @@ export const SHIP_MODULES = {
     type: 'utility',
     stats: { energyBonus: 50 },
     price: 1200
+  },
+  // --- NEW: Stealth modules for espionage and smuggling missions ---
+  'stealth-plating': {
+    id: 'stealth-plating',
+    name: 'Stealth Plating',
+    type: 'special',
+    stats: { detectionReduction: 30 },
+    price: 8000
+  },
+  'scan-jammer': {
+    id: 'scan-jammer',
+    name: 'Active Scan Jammer',
+    type: 'special',
+    stats: { scanImmunity: 10, energyCost: 50 }, // 10 seconds immunity, 50 energy cost
+    price: 12000
   }
 };
 
@@ -182,6 +197,35 @@ export const COMMODITIES = {
     name: 'Purified Water',
     basePrice: 15,
     type: 'consumable'
+  },
+  // --- NEW: Contraband items for smuggling missions ---
+  'narcotics': {
+    id: 'narcotics',
+    name: 'Illegal Narcotics',
+    basePrice: 500,
+    type: 'contraband',
+    isContraband: true
+  },
+  'stolen-data': {
+    id: 'stolen-data',
+    name: 'Stolen Data Cores',
+    basePrice: 800,
+    type: 'contraband',
+    isContraband: true
+  },
+  'black-market-tech': {
+    id: 'black-market-tech',
+    name: 'Black Market Technology',
+    basePrice: 1200,
+    type: 'contraband',
+    isContraband: true
+  },
+  'classified-intel': {
+    id: 'classified-intel',
+    name: 'Classified Intelligence',
+    basePrice: 2000,
+    type: 'contraband',
+    isContraband: true
   }
 };
 

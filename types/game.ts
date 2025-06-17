@@ -3,6 +3,68 @@ export interface Vector2 {
   y: number;
 }
 
+// --- New Mission System Type Definitions ---
+export type MissionId = string & { readonly __brand: 'MissionId' };
+export type FactionId = string & { readonly __brand: 'FactionId' };
+export type SystemId = string & { readonly __brand: 'SystemId' };
+export type WorldObjectId = string & { readonly __brand: 'WorldObjectId' };
+export type CommodityId = string & { readonly __brand: 'CommodityId' };
+export type ShipId = string & { readonly __brand: 'ShipId' };
+
+export type ObjectiveType = 'TRAVEL' | 'KILL' | 'GATHER' | 'INTERACT' | 'SCAN' | 'ESCORT' | 'FOLLOW';
+export type MissionType = 'BOUNTY' | 'SALVAGE' | 'ESPIONAGE' | 'SMUGGLING' | 'EXPEDITION' | 'DELIVERY' | 'REPAIR';
+export type MissionStatus = 'AVAILABLE' | 'ACTIVE' | 'COMPLETED_SUCCESS' | 'COMPLETED_FAILURE' | 'ABANDONED';
+
+export interface MissionObjective {
+   readonly id: string;
+   type: ObjectiveType;
+   description: string;
+   targetId: SystemId | ShipId | WorldObjectId | CommodityId | string;
+   targetCount: number;
+   currentProgress: number;
+   isComplete: boolean;
+   isHidden?: boolean;
+}
+
+export interface Mission {
+   readonly id: MissionId;
+   title: string;
+   type: MissionType;
+   status: MissionStatus;
+   sourceFactionId: FactionId;
+   description: string;
+   successMessage: string;
+   failureMessage: string;
+   objectives: MissionObjective[];
+   currentObjectiveIndex: number;
+   rewardCredits: number;
+   rewardItems?: { itemId: string; quantity: number };
+   reputationChange: {
+       [key in FactionId]?: number;
+   };
+   timeLimitInSeconds?: number;
+   expirationTimestamp?: number;
+}
+
+// --- NEW: WorldObject interface for interactable world entities ---
+export interface WorldObject {
+  id: WorldObjectId;
+  type: 'DamagedJumpGate' | 'BrokenRelay';
+  position: Vector2;
+  status: 'DAMAGED' | 'OPERATIONAL';
+  requiredItems: { itemId: CommodityId; required: number; supplied: number; }[];
+}
+
+// --- NEW: Codex system for archaeological missions ---
+export interface CodexEntry {
+  id: string;
+  title: string;
+  content: string;
+  unlockingMissionId: MissionId;
+  isUnlocked: boolean;
+}
+// --- End New Definitions ---
+
 export interface Ship {
   id: string;
   name: string;
@@ -22,6 +84,7 @@ export interface Ship {
   maxCargo: number;
   modules: ShipModule[];
   faction: string;
+  detectionSignature: number; // --- NEW: For stealth mechanics ---
 }
 
 export interface ShipHull {
@@ -52,6 +115,7 @@ export interface CargoItem {
   category: string;
   quantity: number;
   basePrice: number;
+  isContraband?: boolean; // --- NEW: For smuggling missions ---
 }
 
 export interface StarSystem {
@@ -67,6 +131,8 @@ export interface StarSystem {
   connections: string[];
   discovered: boolean;
   controllingFaction?: string;
+  missions: Mission[]; // Updated to use new Mission type
+  worldObjects: WorldObject[]; // --- NEW: Add worldObjects to StarSystem ---
 }
 
 export interface Station {
@@ -80,25 +146,7 @@ export interface Station {
     supply: number;
     demand: number;
   }>;
-  missions: Mission[];
-}
-
-export interface Mission {
-  id: string;
-  title: string;
-  description: string;
-  type: 'delivery' | 'combat' | 'exploration' | 'mining' | 'escort';
-  reward: number;
-  factionReward?: number;
-  targetSystem?: string;
-  targetPosition?: Vector2;
-  cargo?: {
-    name: string;
-    quantity: number;
-  };
-  target?: string;
-  timeLimit?: number;
-  completed: boolean;
+  missions: Mission[]; // Updated to use new Mission type
 }
 
 export interface Faction {
@@ -124,9 +172,11 @@ export interface GameState {
   galaxy: Record<string, StarSystem>;
   factions: Record<string, Faction>;
   credits: number;
-  activeMode: 'galaxy' | 'system' | 'station';
+  activeMode: 'galaxy' | 'system' | 'station' | 'missionLog' | 'codex'; // --- UPDATED: Add new view modes ---
   selectedTarget?: string;
-  activeMissions: Mission[];
+  activeMissions: Mission[]; // Updated to use new Mission type
+  trackedMissionId?: MissionId; // --- NEW: For HUD mission tracking ---
+  codex: CodexEntry[]; // --- NEW: For archaeological expedition lore ---
   gameTime: number;
   runNumber: number;
   metaProgress: {
@@ -140,8 +190,11 @@ export interface Enemy {
   id: string;
   ship: Ship;
   ai: {
-    behavior: 'aggressive' | 'defensive' | 'patrol' | 'flee';
+    behavior: 'aggressive' | 'defensive' | 'patrol' | 'flee' | 'security'; // --- NEW: Add security behavior ---
     target?: string;
     lastAction: number;
+    scanStartTime?: number; // --- NEW: For security scanning ---
+    scanTarget?: string; // --- NEW: For security scanning ---
   };
+  isBountyTarget?: boolean; // --- NEW: Flag to distinguish elite bounty targets ---
 }

@@ -4,6 +4,7 @@ import { gameLoop } from './utils/GameLoop';
 import { GalaxyMap } from './components/GalaxyMap';
 import { SystemView } from './components/SystemView';
 import { StationInterface } from './components/StationInterface';
+import { MissionLog } from './components/MissionLog'; // --- NEW: Import MissionLog ---
 
 export default function MainApp() {
   // FIXED: Use only primitive selectors to prevent object recreation
@@ -32,6 +33,27 @@ export default function MainApp() {
   
   // FIXED: Extract actions with stable reference
   const actions = useGameStore(state => state.actions);
+
+  // --- NEW: Global keyboard controls for mission log ---
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      switch (e.key.toLowerCase()) {
+        case 'j':
+          e.preventDefault();
+          if (activeMode === 'missionLog') {
+            actions.setActiveMode('system');
+          } else {
+            actions.setActiveMode('missionLog');
+          }
+          break;
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [activeMode, actions]);
 
   // Start game loop on mount - FIXED: No dependencies
   useEffect(() => {
@@ -91,6 +113,10 @@ export default function MainApp() {
         }
         return <StationInterface station={selectedStation} />;
 
+      // --- NEW: Mission Log view ---
+      case 'missionLog':
+        return <MissionLog />;
+
       default:
         return (
           <div className="h-full flex items-center justify-center bg-gradient-to-b from-gray-900 to-black text-white">
@@ -122,6 +148,7 @@ export default function MainApp() {
                   <div>• <span className="text-blue-400">SPACE/Right-click</span> - Fire weapons</div>
                   <div>• <span className="text-blue-400">E</span> - Dock at stations, mine asteroids</div>
                   <div>• <span className="text-blue-400">M</span> - Open galaxy map</div>
+                  <div>• <span className="text-blue-400">J</span> - Open mission log</div>
                 </div>
               </div>
             </div>
@@ -135,11 +162,12 @@ export default function MainApp() {
       {/* Game UI */}
       {renderCurrentView()}
 
-      {/* Active Missions Indicator - FIXED: Only render when needed */}
+      {/* Active Missions Indicator - FIXED: Only render when needed and not in mission log */}
       {activeMissionsLength > 0 && activeMode === 'system' && (
         <div className="absolute top-20 left-4 bg-black bg-opacity-70 p-3 rounded border border-green-500">
-          <div className="text-green-400 font-medium mb-1">
+          <div className="text-green-400 font-medium mb-1 flex items-center gap-2">
             📋 Active Missions ({activeMissionsLength})
+            <span className="text-xs text-gray-400">(Press J for details)</span>
           </div>
           {firstThreeMissions.map(mission => (
             <div key={mission.id} className="text-xs text-gray-300">

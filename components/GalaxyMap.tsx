@@ -15,6 +15,10 @@ export function GalaxyMap() {
   const factions = useGameStore(state => state.factions);
   const activeMissionsLength = useGameStore(state => state.activeMissions.length);
   
+  // --- NEW: Mission tracking selectors ---
+  const trackedMissionId = useGameStore(state => state.trackedMissionId);
+  const activeMissions = useGameStore(state => state.activeMissions);
+  
   const { actions } = useGameStore();
   
   // FIXED: Memoize computed values
@@ -24,6 +28,23 @@ export function GalaxyMap() {
     totalSystems: Object.keys(galaxy).length,
     discoveredCount: Object.values(galaxy).filter(s => s.discovered).length
   }), [galaxy]);
+  
+  // --- NEW: Get tracked mission and check for system targets ---
+  const trackedMission = useMemo(() => {
+    if (!trackedMissionId) return null;
+    return activeMissions.find(m => m.id === trackedMissionId) || null;
+  }, [trackedMissionId, activeMissions]);
+  
+  const currentObjective = useMemo(() => {
+    if (!trackedMission) return null;
+    const objective = trackedMission.objectives[trackedMission.currentObjectiveIndex];
+    return objective && !objective.isHidden ? objective : null;
+  }, [trackedMission]);
+  
+  const targetSystemId = useMemo(() => {
+    if (!currentObjective || currentObjective.type !== 'TRAVEL') return null;
+    return currentObjective.targetId;
+  }, [currentObjective]);
   
   const visibleSystems = useMemo(() => {
     const visible = new Set<string>();
@@ -135,29 +156,71 @@ export function GalaxyMap() {
               const isConnected = currentSystem.connections.includes(system.id);
               const canJump = isConnected && playerFuel >= 10;
               const isDiscovered = system.discovered;
+              const isMissionTarget = targetSystemId === system.id; // --- NEW: Check if system is mission target ---
 
               return (
                 <g key={system.id}>
+                  {/* --- NEW: Mission objective pulsing ring --- */}
+                  {isMissionTarget && (
+                    <circle
+                      cx={system.position.x * scale}
+                      cy={system.position.y * scale}
+                      r="15"
+                      fill="none"
+                      stroke="#00FFFF"
+                      strokeWidth="2"
+                      opacity="0.8"
+                    >
+                      <animate
+                        attributeName="r"
+                        values="15;20;15"
+                        dur="2s"
+                        repeatCount="indefinite"
+                      />
+                      <animate
+                        attributeName="opacity"
+                        values="0.8;0.4;0.8"
+                        dur="2s"
+                        repeatCount="indefinite"
+                      />
+                    </circle>
+                  )}
+                  
                   {/* System circle */}
                   <circle
                     cx={system.position.x * scale}
                     cy={system.position.y * scale}
                     r={isCurrent ? 10 : 7}
                     fill={isCurrent ? '#FFD700' : (isDiscovered ? system.star.color : '#666')}
-                    stroke={isCurrent ? '#FFF' : (isConnected ? '#4a90e2' : '#555')}
-                    strokeWidth={isCurrent ? 3 : (isConnected ? 2 : 1)}
+                    stroke={isCurrent ? '#FFF' : (isMissionTarget ? '#00FFFF' : (isConnected ? '#4a90e2' : '#555'))}
+                    strokeWidth={isCurrent ? 3 : (isMissionTarget ? 3 : (isConnected ? 2 : 1))}
                     className={canJump ? 'cursor-pointer hover:opacity-80' : 'cursor-default'}
                     onClick={() => handleSystemClick(system.id)}
                     opacity={isDiscovered ? 1 : 0.6}
                   />
                   
+                  {/* --- NEW: Mission objective icon --- */}
+                  {isMissionTarget && (
+                    <text
+                      x={system.position.x * scale}
+                      y={system.position.y * scale + 3}
+                      fill="#00FFFF"
+                      fontSize="12"
+                      fontWeight="bold"
+                      textAnchor="middle"
+                      className="pointer-events-none"
+                    >
+                      🎯
+                    </text>
+                  )}
+                  
                   {/* System name */}
                   <text
                     x={system.position.x * scale}
                     y={system.position.y * scale - 15}
-                    fill={isDiscovered ? "white" : "#888"}
+                    fill={isDiscovered ? (isMissionTarget ? "#00FFFF" : "white") : "#888"}
                     fontSize="9"
-                    fontWeight={isCurrent ? "bold" : "normal"}
+                    fontWeight={isCurrent || isMissionTarget ? "bold" : "normal"}
                     textAnchor="middle"
                     className="pointer-events-none"
                   >
