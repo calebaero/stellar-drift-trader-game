@@ -1,11 +1,11 @@
 import React from 'react';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import MainApp from './MainApp';
+import App from './App';
 
-export default function App() {
+export default function AppWithErrorBoundary() {
   return (
     <ErrorBoundary>
-      <MainApp />
+      <App />
     </ErrorBoundary>
   );
 }

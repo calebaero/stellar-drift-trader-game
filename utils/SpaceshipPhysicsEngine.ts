@@ -45,7 +45,7 @@ const PHYSICS_CONSTANTS = {
    * Higher values result in faster acceleration.
    * @type {number}
    */
-  THRUST_FORCE: 0.1,
+  THRUST_FORCE: 0.01,
 
   /**
    * A friction-like force that slows the ship down over time, simulating space drag.
@@ -61,7 +61,7 @@ const PHYSICS_CONSTANTS = {
    * This prevents the ship from accelerating indefinitely.
    * @type {number}
    */
-  MAX_VELOCITY: 0.5,
+  MAX_VELOCITY: 0.3,
 
   /**
    * The rate at which the ship turns to face the target angle. This is the

@@ -1,56 +1,38 @@
-import React from 'react';
-import { GameState, StarSystem } from '../types/game';
+import React, { useMemo, useCallback } from 'react';
+import { useGameStore } from '../store/useGameStore';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Badge } from './ui/badge';
 import { distance } from '../utils/gameUtils';
 
-interface GalaxyMapProps {
-  gameState: GameState;
-  onJumpToSystem: (systemId: string) => void;
-  onSetActiveMode: (mode: GameState['activeMode']) => void;
-}
-
-export function GalaxyMap({ gameState, onJumpToSystem, onSetActiveMode }: GalaxyMapProps) {
-  const currentSystem = gameState.galaxy[gameState.currentSystem];
-  const viewSize = 600;
-  const scale = 0.5;
-
-  const handleSystemClick = (systemId: string) => {
-    console.log('System clicked:', systemId);
-    const targetSystem = gameState.galaxy[systemId];
-    
-    // FIXED: Check if system is connected, not discovered
-    const isConnected = currentSystem.connections.includes(systemId);
-    const hasEnoughFuel = gameState.player.fuel >= 10;
-    
-    console.log('Connected:', isConnected, 'Fuel:', hasEnoughFuel);
-    
-    if (isConnected && hasEnoughFuel) {
-      console.log('Jumping to system:', targetSystem.name);
-      onJumpToSystem(systemId);
-      onSetActiveMode('system');
-    } else if (!isConnected) {
-      console.log('System not connected to current system');
-    } else {
-      console.log('Not enough fuel for jump');
-    }
-  };
-
-  const handleJumpButtonClick = (systemId: string) => {
-    console.log('Jump button clicked for:', systemId);
-    handleSystemClick(systemId);
-  };
-
-  // FIXED: Show connected systems instead of only discovered ones
-  const getVisibleSystems = () => {
+export function GalaxyMap() {
+  // FIXED: Use individual stable selectors
+  const currentSystemId = useGameStore(state => state.currentSystem);
+  const galaxy = useGameStore(state => state.galaxy);
+  const playerFuel = useGameStore(state => state.player.fuel);
+  const playerMaxFuel = useGameStore(state => state.player.maxFuel);
+  const credits = useGameStore(state => state.credits);
+  const factions = useGameStore(state => state.factions);
+  const activeMissionsLength = useGameStore(state => state.activeMissions.length);
+  
+  const { actions } = useGameStore();
+  
+  // FIXED: Memoize computed values
+  const currentSystem = useMemo(() => galaxy[currentSystemId], [galaxy, currentSystemId]);
+  
+  const galaxyStats = useMemo(() => ({
+    totalSystems: Object.keys(galaxy).length,
+    discoveredCount: Object.values(galaxy).filter(s => s.discovered).length
+  }), [galaxy]);
+  
+  const visibleSystems = useMemo(() => {
     const visible = new Set<string>();
     
     // Always show current system
-    visible.add(gameState.currentSystem);
+    visible.add(currentSystemId);
     
     // Show all discovered systems
-    Object.values(gameState.galaxy).forEach(system => {
+    Object.values(galaxy).forEach(system => {
       if (system.discovered) {
         visible.add(system.id);
         // Also show connected systems to discovered ones
@@ -60,10 +42,31 @@ export function GalaxyMap({ gameState, onJumpToSystem, onSetActiveMode }: Galaxy
       }
     });
     
-    return Array.from(visible).map(id => gameState.galaxy[id]);
-  };
+    return Array.from(visible).map(id => galaxy[id]);
+  }, [galaxy, currentSystemId]);
 
-  const visibleSystems = getVisibleSystems();
+  const viewSize = 600;
+  const scale = 0.5;
+
+  // FIXED: Stable callbacks
+  const handleSystemClick = useCallback((systemId: string) => {
+    const targetSystem = galaxy[systemId];
+    const isConnected = currentSystem.connections.includes(systemId);
+    const hasEnoughFuel = playerFuel >= 10;
+    
+    if (isConnected && hasEnoughFuel) {
+      actions.jumpToSystem(systemId);
+      actions.setActiveMode('system');
+    }
+  }, [galaxy, currentSystem.connections, playerFuel, actions.jumpToSystem, actions.setActiveMode]);
+
+  const handleJumpButtonClick = useCallback((systemId: string) => {
+    handleSystemClick(systemId);
+  }, [handleSystemClick]);
+
+  const handleReturnToSystem = useCallback(() => {
+    actions.setActiveMode('system');
+  }, [actions.setActiveMode]);
 
   return (
     <div className="h-full flex flex-col bg-gray-900 text-white">
@@ -73,10 +76,10 @@ export function GalaxyMap({ gameState, onJumpToSystem, onSetActiveMode }: Galaxy
           <h2>Galaxy Map - {visibleSystems.length} Systems Visible</h2>
           <div className="flex gap-4">
             <Badge variant="outline">
-              Credits: {gameState.credits}
+              Credits: {credits}
             </Badge>
             <Badge variant="outline">
-              Fuel: {gameState.player.fuel}/{gameState.player.maxFuel}
+              Fuel: {playerFuel}/{playerMaxFuel}
             </Badge>
           </div>
         </div>
@@ -106,10 +109,10 @@ export function GalaxyMap({ gameState, onJumpToSystem, onSetActiveMode }: Galaxy
             {/* Connections - show all connections between visible systems */}
             {visibleSystems.map(system => 
               system.connections.map(connectionId => {
-                const connectedSystem = gameState.galaxy[connectionId];
+                const connectedSystem = galaxy[connectionId];
                 if (!connectedSystem || !visibleSystems.find(s => s.id === connectionId)) return null;
                 
-                const isCurrentConnection = system.id === gameState.currentSystem || connectionId === gameState.currentSystem;
+                const isCurrentConnection = system.id === currentSystemId || connectionId === currentSystemId;
                 
                 return (
                   <line
@@ -128,9 +131,9 @@ export function GalaxyMap({ gameState, onJumpToSystem, onSetActiveMode }: Galaxy
 
             {/* Systems */}
             {visibleSystems.map(system => {
-              const isCurrent = system.id === gameState.currentSystem;
+              const isCurrent = system.id === currentSystemId;
               const isConnected = currentSystem.connections.includes(system.id);
-              const canJump = isConnected && gameState.player.fuel >= 10;
+              const canJump = isConnected && playerFuel >= 10;
               const isDiscovered = system.discovered;
 
               return (
@@ -178,7 +181,7 @@ export function GalaxyMap({ gameState, onJumpToSystem, onSetActiveMode }: Galaxy
                       cx={system.position.x * scale + 8}
                       cy={system.position.y * scale - 8}
                       r="2"
-                      fill={gameState.factions[system.controllingFaction]?.color || '#888'}
+                      fill={factions[system.controllingFaction]?.color || '#888'}
                     />
                   )}
                 </g>
@@ -213,7 +216,7 @@ export function GalaxyMap({ gameState, onJumpToSystem, onSetActiveMode }: Galaxy
               <div>Star Type: {currentSystem.star.type}</div>
               <div>Stations: {currentSystem.stations.length}</div>
               <div>Asteroids: {currentSystem.asteroids.length}</div>
-              <div>Faction: {gameState.factions[currentSystem.controllingFaction]?.name}</div>
+              <div>Faction: {factions[currentSystem.controllingFaction]?.name}</div>
             </div>
 
             <div className="space-y-2">
@@ -222,9 +225,9 @@ export function GalaxyMap({ gameState, onJumpToSystem, onSetActiveMode }: Galaxy
                 <div className="text-gray-400 text-sm">No connected systems</div>
               )}
               {currentSystem.connections.map(connectionId => {
-                const system = gameState.galaxy[connectionId];
+                const system = galaxy[connectionId];
                 const dist = distance(currentSystem.position, system.position);
-                const canJump = gameState.player.fuel >= 10;
+                const canJump = playerFuel >= 10;
                 
                 return (
                   <Button
@@ -252,15 +255,15 @@ export function GalaxyMap({ gameState, onJumpToSystem, onSetActiveMode }: Galaxy
           <Card className="p-4 bg-gray-700 border-gray-600 mt-4">
             <h4 className="mb-2">Galaxy Status</h4>
             <div className="space-y-1 text-sm">
-              <div>Systems Discovered: {Object.values(gameState.galaxy).filter(s => s.discovered).length} / {Object.keys(gameState.galaxy).length}</div>
+              <div>Systems Discovered: {galaxyStats.discoveredCount} / {galaxyStats.totalSystems}</div>
               <div>Systems Visible: {visibleSystems.length}</div>
-              <div>Active Missions: {gameState.activeMissions.length}</div>
+              <div>Active Missions: {activeMissionsLength}</div>
             </div>
           </Card>
 
           <div className="mt-4">
             <Button
-              onClick={() => onSetActiveMode('system')}
+              onClick={handleReturnToSystem}
               variant="outline"
               className="w-full"
             >

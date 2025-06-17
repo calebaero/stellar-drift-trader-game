@@ -1,6 +1,12 @@
 import { Ship, Vector2, StarSystem, CargoItem, Mission } from '../types/game';
 import { MARKET_COMMODITIES, ASTEROID_RESOURCES } from '../data/gameData';
 
+// FIXED: Add unique ID generator to prevent duplicate keys
+let uniqueIdCounter = 0;
+function generateUniqueId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${++uniqueIdCounter}`;
+}
+
 export function distance(pos1: Vector2, pos2: Vector2): number {
   const dx = pos1.x - pos2.x;
   const dy = pos1.y - pos2.y;
@@ -67,6 +73,9 @@ export function removeCargo(ship: Ship, itemId: string, quantity: number): boole
 }
 
 export function generateGalaxy(): Record<string, StarSystem> {
+  // FIXED: Reset counter for new galaxy generation
+  uniqueIdCounter = 0;
+  
   const systems: Record<string, StarSystem> = {};
   const starNames = [
     'Alpha Centauri', 'Proxima', 'Barnard\'s Star', 'Wolf 359', 'Lalande 21185',
@@ -80,14 +89,20 @@ export function generateGalaxy(): Record<string, StarSystem> {
   const starTypes = ['G', 'K', 'M', 'F', 'A'];
   const starColors = ['#FFD700', '#FF8C00', '#FF4500', '#87CEEB', '#FFFFFF'];
 
-  // Generate systems first
+  // FIXED: Generate systems first with proper initialization and corrected ID generation
   starNames.forEach((name, index) => {
-    const systemId = name.toLowerCase().replace(/['\s]/g, '-');
+    // FIXED: Proper regex to convert star names to valid system IDs
+    const systemId = name.toLowerCase()
+      .replace(/['\s]/g, '-')  // Replace apostrophes and spaces with hyphens
+      .replace(/--+/g, '-')    // Replace multiple consecutive hyphens with single hyphen
+      .replace(/^-+|-+$/g, ''); // Remove leading/trailing hyphens
+    
     const angle = (index / starNames.length) * Math.PI * 2;
     const radius = 200 + Math.random() * 300;
     
     const starTypeIndex = Math.floor(Math.random() * starTypes.length);
     
+    // FIXED: Ensure all required properties are properly initialized
     systems[systemId] = {
       id: systemId,
       name,
@@ -102,16 +117,34 @@ export function generateGalaxy(): Record<string, StarSystem> {
       stations: [],
       asteroids: [],
       missions: [],
-      connections: [],
+      connections: [], // FIXED: Ensure connections array is always initialized
       discovered: index === 0, // Only first system (Alpha Centauri) starts discovered
       controllingFaction: factions[Math.floor(Math.random() * factions.length)]
     };
   });
 
-  // Generate connections between nearby systems
-  Object.values(systems).forEach(system => {
-    Object.values(systems).forEach(otherSystem => {
-      if (system.id !== otherSystem.id) {
+  // FIXED: Generate connections between nearby systems with proper null checks
+  const systemIds = Object.keys(systems);
+  const systemValues = Object.values(systems);
+  
+  // Validate that all systems are properly created and log the starting system
+  console.log(`Generated ${systemIds.length} systems for galaxy`);
+  console.log('Starting system should be:', systemIds[0]); // This should be "alpha-centauri"
+  
+  systemValues.forEach(system => {
+    // FIXED: Add null checks and validation
+    if (!system || !system.connections) {
+      console.error('Invalid system found during connection generation:', system);
+      return;
+    }
+    
+    systemValues.forEach(otherSystem => {
+      // FIXED: Add comprehensive null checks
+      if (!otherSystem || !otherSystem.connections || system.id === otherSystem.id) {
+        return;
+      }
+      
+      try {
         const dist = distance(system.position, otherSystem.position);
         // Create connections for systems within reasonable range
         if (dist < 250 && Math.random() < 0.4) {
@@ -122,108 +155,160 @@ export function generateGalaxy(): Record<string, StarSystem> {
             otherSystem.connections.push(system.id);
           }
         }
+      } catch (error) {
+        console.error('Error generating connections between systems:', {
+          system: system?.id,
+          otherSystem: otherSystem?.id,
+          error
+        });
       }
     });
   });
 
-  // Ensure all systems are reachable from Alpha Centauri
+  // FIXED: Ensure all systems are reachable from Alpha Centauri with validation
   const visited = new Set<string>();
-  const queue = ['alpha-centauri'];
-  visited.add('alpha-centauri');
+  const startingSystemId = systemIds[0]; // Should be "alpha-centauri" now
+  const queue = [startingSystemId];
+  
+  // Validate starting system exists
+  if (!systems[startingSystemId]) {
+    console.error(`Starting system ${startingSystemId} not found! Available systems:`, Object.keys(systems));
+    throw new Error(`Starting system ${startingSystemId} not found in generated galaxy`);
+  } else {
+    visited.add(startingSystemId);
+    console.log(`Starting galaxy connectivity from: ${startingSystemId}`);
+  }
 
   while (queue.length > 0) {
     const currentId = queue.shift()!;
     const current = systems[currentId];
     
+    // FIXED: Add null check for current system
+    if (!current || !current.connections) {
+      console.error('Invalid system during reachability check:', currentId);
+      continue;
+    }
+    
     current.connections.forEach(connectionId => {
-      if (!visited.has(connectionId)) {
+      if (!visited.has(connectionId) && systems[connectionId]) {
         visited.add(connectionId);
         queue.push(connectionId);
       }
     });
   }
 
-  // Connect any unreachable systems
+  // FIXED: Connect any unreachable systems with proper validation
   Object.keys(systems).forEach(systemId => {
+    const system = systems[systemId];
+    if (!system || !system.connections) {
+      console.error('Invalid system during unreachable system connection:', systemId);
+      return;
+    }
+    
     if (!visited.has(systemId)) {
       // Find closest reachable system and connect to it
-      let closest = 'alpha-centauri';
+      let closest = startingSystemId; // Use the validated starting system
       let closestDist = Infinity;
       
       visited.forEach(reachableId => {
-        const dist = distance(systems[systemId].position, systems[reachableId].position);
-        if (dist < closestDist) {
-          closestDist = dist;
-          closest = reachableId;
+        const reachableSystem = systems[reachableId];
+        if (!reachableSystem) return;
+        
+        try {
+          const dist = distance(system.position, reachableSystem.position);
+          if (dist < closestDist) {
+            closestDist = dist;
+            closest = reachableId;
+          }
+        } catch (error) {
+          console.error('Error calculating distance for unreachable system connection:', error);
         }
       });
       
-      systems[systemId].connections.push(closest);
-      systems[closest].connections.push(systemId);
-      visited.add(systemId);
+      // FIXED: Validate closest system before connecting
+      const closestSystem = systems[closest];
+      if (closestSystem && closestSystem.connections) {
+        system.connections.push(closest);
+        closestSystem.connections.push(systemId);
+        visited.add(systemId);
+      }
     }
   });
 
   // Generate stations, asteroids, and missions for each system
   Object.values(systems).forEach(system => {
-    // Generate 1-3 stations per system
-    const stationCount = Math.floor(Math.random() * 3) + 1;
-    for (let i = 0; i < stationCount; i++) {
-      const angle = (i / stationCount) * Math.PI * 2 + Math.random();
-      const radius = 300 + Math.random() * 200;
-      
-      const station = {
-        id: `${system.id}-station-${i}`,
-        name: `${system.name} ${['Hub', 'Outpost', 'Station', 'Port', 'Base'][Math.floor(Math.random() * 5)]}`,
-        type: ['trading', 'mining', 'military'][Math.floor(Math.random() * 3)] as any,
-        position: {
-          x: Math.cos(angle) * radius,
-          y: Math.sin(angle) * radius
-        },
-        faction: system.controllingFaction,
-        market: generateMarket(),
-        missions: []
-      };
-      
-      system.stations.push(station);
+    // FIXED: Add null check for system
+    if (!system) {
+      console.error('Invalid system during content generation');
+      return;
     }
-
-    // Generate 4-10 asteroids per system
-    const asteroidCount = Math.floor(Math.random() * 7) + 4;
-    for (let i = 0; i < asteroidCount; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const radius = 150 + Math.random() * 400;
-      const size = 15 + Math.random() * 25;
-      
-      const asteroid = {
-        id: `${system.id}-asteroid-${i}`,
-        position: {
-          x: Math.cos(angle) * radius,
-          y: Math.sin(angle) * radius
-        },
-        size,
-        health: size * 2,
-        resources: Math.random() < 0.8 ? [generateResource()] : []
-      };
-      
-      system.asteroids.push(asteroid);
-    }
-
-    // Generate missions for each station
-    system.stations.forEach(station => {
-      const missionCount = Math.floor(Math.random() * 5) + 2;
-      for (let i = 0; i < missionCount; i++) {
-        const mission = generateMission(system.id, station.id);
-        station.missions.push(mission);
-        system.missions.push(mission);
+    
+    try {
+      // Generate 1-3 stations per system
+      const stationCount = Math.floor(Math.random() * 3) + 1;
+      for (let i = 0; i < stationCount; i++) {
+        const angle = (i / stationCount) * Math.PI * 2 + Math.random();
+        const radius = 300 + Math.random() * 200;
+        
+        const station = {
+          // FIXED: Use unique ID generator for stations
+          id: generateUniqueId(`${system.id}-station`),
+          name: `${system.name} ${['Hub', 'Outpost', 'Station', 'Port', 'Base'][Math.floor(Math.random() * 5)]}`,
+          type: ['trading', 'mining', 'military'][Math.floor(Math.random() * 3)] as any,
+          position: {
+            x: Math.cos(angle) * radius,
+            y: Math.sin(angle) * radius
+          },
+          faction: system.controllingFaction,
+          market: generateMarket(),
+          missions: []
+        };
+        
+        system.stations.push(station);
       }
-    });
+
+      // Generate 4-10 asteroids per system
+      const asteroidCount = Math.floor(Math.random() * 7) + 4;
+      for (let i = 0; i < asteroidCount; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const radius = 150 + Math.random() * 400;
+        const size = 15 + Math.random() * 25;
+        
+        const asteroid = {
+          // FIXED: Use unique ID generator for asteroids
+          id: generateUniqueId(`${system.id}-asteroid`),
+          position: {
+            x: Math.cos(angle) * radius,
+            y: Math.sin(angle) * radius
+          },
+          size,
+          health: size * 2,
+          resources: Math.random() < 0.8 ? [generateResource()] : []
+        };
+        
+        system.asteroids.push(asteroid);
+      }
+
+      // Generate missions for each station
+      system.stations.forEach(station => {
+        const missionCount = Math.floor(Math.random() * 5) + 2;
+        for (let i = 0; i < missionCount; i++) {
+          const mission = generateMission(system.id, station.id);
+          station.missions.push(mission);
+          system.missions.push(mission);
+        }
+      });
+    } catch (error) {
+      console.error('Error generating content for system:', system.id, error);
+    }
   });
 
   // Log generation results
   console.log(`Generated galaxy with ${Object.keys(systems).length} systems:`);
   Object.values(systems).forEach(system => {
-    console.log(`- ${system.name}: ${system.stations.length} stations, ${system.asteroids.length} asteroids (${system.asteroids.filter(a => a.resources.length > 0).length} with resources), ${system.missions.length} missions`);
+    if (system) {
+      console.log(`- ${system.name} (${system.id}): ${system.stations.length} stations, ${system.asteroids.length} asteroids (${system.asteroids.filter(a => a.resources.length > 0).length} with resources), ${system.missions.length} missions`);
+    }
   });
 
   return systems;
@@ -274,7 +359,8 @@ function generateMission(systemId: string, stationId: string): Mission {
   const type = missionTypes[Math.floor(Math.random() * missionTypes.length)] as any;
   
   const baseMission = {
-    id: `mission-${Date.now()}-${Math.random()}`,
+    // FIXED: Use unique ID generator to prevent duplicate mission IDs
+    id: generateUniqueId('mission'),
     title: '',
     description: '',
     type,
