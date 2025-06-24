@@ -345,15 +345,8 @@ export function generateGalaxy(): Record<string, StarSystem> {
         console.log(`Created broken relay in ${system.name}`);
       }
 
-      // Generate missions for each station
-      system.stations.forEach(station => {
-        const missionCount = Math.floor(Math.random() * 5) + 2;
-        for (let i = 0; i < missionCount; i++) {
-          const mission = generateMission(system.id, station.id);
-          station.missions.push(mission);
-          system.missions.push(mission);
-        }
-      });
+      // Missions are now generated dynamically by the MissionManager
+      // Station missions array is maintained for compatibility but no longer pre-populated
     } catch (error) {
       console.error('Error generating content for system:', system.id, error);
     }
@@ -411,76 +404,7 @@ function generateResource() {
   };
 }
 
-function generateMission(systemId: string, stationId: string): Mission {
-  const missionTypes = ['delivery', 'combat', 'mining', 'exploration', 'escort'];
-  const type = missionTypes[Math.floor(Math.random() * missionTypes.length)] as any;
-  
-  const baseMission = {
-    // FIXED: Use unique ID generator to prevent duplicate mission IDs
-    id: generateUniqueId('mission'),
-    title: '',
-    description: '',
-    type,
-    source: stationId,
-    reward: 500 + Math.floor(Math.random() * 1000),
-    status: 'available' as any,
-    progress: 0
-  };
 
-  switch (type) {
-    case 'delivery':
-      return {
-        ...baseMission,
-        title: 'Cargo Delivery',
-        description: 'Transport goods to a distant station safely.',
-        cargo: {
-          id: 'delivery-package',
-          name: 'Delivery Package',
-          quantity: Math.floor(Math.random() * 5) + 1,
-          basePrice: 0
-        },
-        destination: systemId
-      };
-    
-    case 'combat':
-      return {
-        ...baseMission,
-        title: 'Eliminate Hostiles',
-        description: 'Destroy enemy ships threatening trade routes.',
-        target: 'Pirates',
-        targetCount: Math.floor(Math.random() * 3) + 2
-      };
-    
-    case 'mining':
-      return {
-        ...baseMission,
-        title: 'Resource Extraction',
-        description: 'Mine valuable resources from asteroids.',
-        requiredResource: ASTEROID_RESOURCES[Math.floor(Math.random() * ASTEROID_RESOURCES.length)],
-        targetQuantity: Math.floor(Math.random() * 10) + 5
-      };
-    
-    case 'exploration':
-      return {
-        ...baseMission,
-        title: 'System Survey',
-        description: 'Explore and map uncharted regions.',
-        destination: systemId
-      };
-    
-    case 'escort':
-      return {
-        ...baseMission,
-        title: 'Escort Mission',
-        description: 'Protect a convoy from hostile forces.',
-        destination: systemId,
-        timeLimit: 24
-      };
-    
-    default:
-      return baseMission;
-  }
-}
 
 // Mission tracking and completion utilities
 export function checkMissionProgress(mission: Mission, gameState: any): boolean {

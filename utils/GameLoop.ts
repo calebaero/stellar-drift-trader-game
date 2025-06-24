@@ -1,6 +1,7 @@
 import { useGameStore } from '../store/useGameStore';
 import { SpaceshipPhysicsEngine } from './SpaceshipPhysicsEngine';
 import { updateShipPhysics, distance, checkMissionProgress, applyCollisionDamage } from './gameUtils';
+import { MissionManager } from './MissionManager';
 
 // FIXED: Add unique ID generator to prevent duplicate keys in GameLoop
 let gameLoopIdCounter = 0;
@@ -16,6 +17,7 @@ class GameLoop {
   private lastTime = 0;
   private animationFrameId = 0;
   private physicsEngine = new SpaceshipPhysicsEngine();
+  private missionManager = new MissionManager();
   private isRunning = false;
   
   // FIXED v2: Much less frequent state updates to prevent React overwhelm
@@ -28,6 +30,9 @@ class GameLoop {
   private internalEnemies: any[] = [];
   private internalProjectiles: any[] = [];
   private internalExplosions: any[] = [];
+  
+  // Mission system timing
+  private lastMissionCheck = 0;
 
   start() {
     if (this.isRunning) return;
@@ -64,6 +69,13 @@ class GameLoop {
     try {
       // Run physics at 60fps on internal state
       this.updateInternalPhysics(deltaTime);
+      this.missionManager.updateMissionProgress(useGameStore.getState());
+      
+      // Check for new missions every 30 seconds
+      if (currentTime - this.lastMissionCheck > 30000) {
+        this.checkForNewMissions();
+        this.lastMissionCheck = currentTime;
+      }
       
       // FIXED v2: Only sync to React state every 100ms (10fps)
       if (currentTime - this.lastStateUpdate >= this.updateInterval) {
@@ -292,6 +304,15 @@ class GameLoop {
     // Only call setState if there are actual updates
     if (Object.keys(updates).length > 0) {
       useGameStore.setState(updates);
+    }
+  }
+
+  // Add this new method inside the GameLoop class
+  private checkForNewMissions() {
+    const state = useGameStore.getState();
+    const newMissions = this.missionManager.generateMissions(state);
+    if (newMissions.length > 0) {
+      useGameStore.getState().actions.addAvailableMissions(newMissions);
     }
   }
 

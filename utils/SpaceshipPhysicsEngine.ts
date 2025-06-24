@@ -61,7 +61,7 @@ const PHYSICS_CONSTANTS = {
    * This prevents the ship from accelerating indefinitely.
    * @type {number}
    */
-  MAX_VELOCITY: 0.3,
+  MAX_VELOCITY: 0.5,
 
   /**
    * The rate at which the ship turns to face the target angle. This is the

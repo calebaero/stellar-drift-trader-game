@@ -28,6 +28,9 @@ interface GameStore extends GameState {
     scale: number;
   }>;
   
+  // Available missions from MissionManager
+  missions: Mission[];
+  
   // Player input state for physics engine
   playerInput: {
     isThrusting: boolean;
@@ -64,6 +67,7 @@ interface GameStore extends GameState {
     acceptMission: (mission: Mission) => void;
     completeMission: (missionId: string) => void;
     abandonMission: (missionId: string) => void; // --- NEW: Abandon mission action ---
+    addAvailableMissions: (missions: Mission[]) => void; // --- NEW: Add missions from MissionManager ---
     
     // Enemy management - FIXED: Simplified to reduce GameLoop coupling
     spawnEnemy: (position: Vector2, faction?: string) => void;
@@ -141,6 +145,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   enemies: [],
   projectiles: [],
   explosions: [],
+  
+  // Available missions from MissionManager
+  missions: [],
   
   // Player input
   playerInput: {
@@ -468,6 +475,20 @@ export const useGameStore = create<GameStore>((set, get) => ({
         factions: newFactions,
         activeMissions: state.activeMissions.filter(m => m.id !== missionId),
         trackedMissionId: state.trackedMissionId === missionId ? undefined : state.trackedMissionId
+      });
+    },
+    
+    // --- NEW: Add missions from MissionManager ---
+    addAvailableMissions: (missions: Mission[]) => {
+      set(state => {
+        const newMissions = [...state.missions];
+        missions.forEach(mission => {
+          // Prevent adding duplicate missions
+          if (!newMissions.some(m => m.id === mission.id)) {
+            newMissions.push(mission);
+          }
+        });
+        return { missions: newMissions };
       });
     },
     

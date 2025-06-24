@@ -28,6 +28,18 @@ export function StationInterface({ station }: StationInterfaceProps) {
   const activeMissionsLength = useGameStore(state => state.activeMissions.length);
   const factions = useGameStore(state => state.factions);
   
+  // --- NEW: Use global mission system ---
+  const allMissions = useGameStore(state => state.missions);
+  const acceptMission = useGameStore(state => state.actions.acceptMission);
+
+  // Filter missions that are 'AVAILABLE' and from this station's faction
+  const availableMissions = useMemo(() => {
+    return allMissions.filter(mission =>
+      mission.status === 'AVAILABLE' &&
+      mission.sourceFactionId === station.faction
+    );
+  }, [allMissions, station.faction]);
+  
   const [selectedTab, setSelectedTab] = useState('market');
 
   // FIXED: Memoize computed values to prevent recreation
@@ -68,8 +80,8 @@ export function StationInterface({ station }: StationInterfaceProps) {
   }, [actions]);
 
   const handleAcceptMission = useCallback((mission: any) => {
-    actions.acceptMission(mission);
-  }, [actions]);
+    acceptMission(mission);
+  }, [acceptMission]);
 
   const renderMarket = () => (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
